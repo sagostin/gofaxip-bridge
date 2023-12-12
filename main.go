@@ -207,11 +207,16 @@ func appendToLogFile(line string) error {
 
 // readLines reads all lines from a file and returns them as a slice of strings
 func readLines(filePath string) ([]string, error) {
-	file, err := os.Open(filePath)
+	file, err := os.OpenFile(filePath, os.O_RDONLY|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+
+		}
+	}(file)
 
 	var lines []string
 	scanner := bufio.NewScanner(file)
