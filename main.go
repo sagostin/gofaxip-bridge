@@ -43,7 +43,8 @@ type FaxLogEntry struct {
 	FaxType        string
 }
 
-var logFilePathFlag string // New flag for log file path
+var processedFilePath string // New flag for log file path
+var fsWatcher *fsnotify.Watcher
 
 var (
 	sentFaxes = prometheus.NewCounter(prometheus.CounterOpts{
@@ -87,7 +88,7 @@ func main() {
 	if err := os.MkdirAll(logDirPath, os.ModePerm); err != nil {
 		log.Fatalf("Failed to create log directory: %s", err)
 	}
-	logFilePathFlag = filepath.Join(logDirPath, "fax_log.txt") // Set the global log file path
+	processedFilePath = filepath.Join(logDirPath, "processed_faxes.log") // Set the processed file path
 
 	log.Info("Starting up")
 
@@ -97,56 +98,48 @@ func main() {
 	}()
 	// Create a new watcher
 	watcher, err := fsnotify.NewWatcher()
+	fsWatcher = watcher
 	if err != nil {
 		log.Errorf("ERROR creating watcher: %s", err)
 		return
 	}
-	/*defer func(watcher *fsnotify.Watcher) {
-		err := watcher.Close()
+	defer func() {
+		err := fsWatcher.Close()
 		if err != nil {
 			log.Errorf("Error closing watcher: %s", err)
 		}
-	}(watcher)*/
+	}()
 
-	// Add the file to the watcher
-	if err := watcher.Add(logFilePath); err != nil {
-		log.Errorf("ERROR adding file to watcher: %s", err)
-		return
+	// Function to safely re-add the file to the watcher
+	reAddFileToWatcher := func() {
+		time.Sleep(100 * time.Millisecond) // Short delay to ensure file exists
+		if err := watcher.Add(logFilePath); err != nil {
+			log.Errorf("ERROR re-adding file to watcher: %s", err)
+		}
 	}
+
+	// Add the file to the watcher initially
+	reAddFileToWatcher()
 
 	// Process file initially
 	go processFile(logFilePath, spoolerPath)
 
-	// Watcher loop
+	// Watcher and polling loop
 	go func() {
-		var debounceTimer *time.Timer
-
-		processFileWithDebounce := func() {
-			if debounceTimer != nil {
-				debounceTimer.Stop()
-			}
-			debounceTimer = time.AfterFunc(1*time.Second, func() {
-				processFile(logFilePath, spoolerPath)
-
-				err := watcher.Remove(logFilePath)
-				if err != nil {
-					return
-				}
-				err = watcher.Add(logFilePath)
-				if err != nil {
-					return
-				}
-			})
-		}
-
 		for {
 			select {
 			case event := <-watcher.Events:
-				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Chmod) != 0 {
-					processFileWithDebounce()
+				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove|fsnotify.Chmod) != 0 {
+					processFile(logFilePath, spoolerPath)
+					if event.Op&(fsnotify.Rename|fsnotify.Remove) != 0 {
+						reAddFileToWatcher()
+					}
 				}
 			case err := <-watcher.Errors:
 				log.Errorf("Watcher error: %s", err)
+				reAddFileToWatcher() // Attempt to recover from watcher error
+			case <-time.After(10 * time.Second): // Polling interval
+				processFile(logFilePath, spoolerPath) // Periodic recheck
 			}
 		}
 	}()
@@ -155,22 +148,32 @@ func main() {
 	select {}
 }
 
+// processFile processes the log file, skipping already processed lines
 func processFile(filePath string, spoolerDir string) {
-	file, err := os.Open(filePath)
+	processedLines, err := readLines(processedFilePath)
 	if err != nil {
-		fmt.Println("ERROR:", err)
+		log.Errorf("Error reading processed lines log: %s", err)
 		return
 	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
+	processedLinesSet := make(map[string]struct{})
+	for _, line := range processedLines {
+		processedLinesSet[line] = struct{}{}
+	}
 
-		}
-	}(file)
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Errorf("Error opening log file: %s", err)
+		return
+	}
+	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
+		if _, processed := processedLinesSet[line]; processed {
+			continue // Skip already processed lines
+		}
+
 		entry, err := parseLogLine(line, spoolerDir, filePath)
 		if err != nil {
 			log.Errorf("ERROR: %s", err)
@@ -178,11 +181,44 @@ func processFile(filePath string, spoolerDir string) {
 		}
 
 		log.Printf("%+v\n", entry)
+
+		err = appendToLogFile(line) // Append the processed line to the log
+		if err != nil {
+			log.Errorf("Error appending to processed lines log: %s", err)
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Errorf("ERROR: %s", err)
+		log.Errorf("Scanner error: %s", err)
 	}
+}
+
+// appendToLogFile appends a line to the processed faxes log file
+func appendToLogFile(line string) error {
+	f, err := os.OpenFile(processedFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(line + "\n")
+	return err
+}
+
+// readLines reads all lines from a file and returns them as a slice of strings
+func readLines(filePath string) ([]string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	return lines, scanner.Err()
 }
 
 func parseLogLine(line string, spoolerDir string, logFilePath string) (FaxLogEntry, error) {
@@ -239,13 +275,12 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (FaxLogEnt
 			failedRecv.Inc()
 			log.Warning("Failed to receive fax...")
 			break
+		} else {
+			err := sendFax(entry, spoolerDir)
+			if err != nil {
+				log.Errorf("Failed to send fax: %s", err)
+			}
 		}
-
-		err := sendFax(entry, spoolerDir)
-		if err != nil {
-			log.Errorf("Failed to send fax: %s", err)
-		}
-
 		break
 	case "SEND":
 		sentFaxes.Inc()
@@ -313,43 +348,12 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (FaxLogEnt
 		return FaxLogEntry{}, err
 	}
 
+	err = fsWatcher.Add(logFilePath)
+	if err != nil {
+		return FaxLogEntry{}, err
+	}
+
 	return entry, nil
-}
-
-func readLines(filePath string) ([]string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-
-		}
-	}(file)
-
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	return lines, scanner.Err()
-}
-
-func appendToLogFile(line string) error {
-	f, err := os.OpenFile(logFilePathFlag, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer func(f *os.File) {
-		err := f.Close()
-		if err != nil {
-
-		}
-	}(f)
-
-	_, err = f.WriteString(line + "\n")
-	return err
 }
 
 func sendFax(entry FaxLogEntry, spoolDir string) error {
