@@ -167,6 +167,12 @@ func main() {
 
 	if lokiURL != "" {
 		lokiClient = NewLokiClient(lokiURL, lokiUser, lokiPass)
+
+		marshal, err := json.Marshal(lokiClient)
+		if err != nil {
+			return
+		}
+		log.Info(string(marshal))
 	}
 
 	// Ensure log directory exists
