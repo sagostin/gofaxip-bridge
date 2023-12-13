@@ -379,5 +379,14 @@ func sendFax(entry FaxLogEntry, spoolDir string) error {
 		return fmt.Errorf("sendfax command failed: %w", err)
 	}
 
+	// Delete the fax file after sending
+	err = os.Remove(fmt.Sprintf("%s/%s", spoolDir, entry.FilePath))
+	if err != nil {
+		log.Errorf("Failed to delete fax file: %s", err)
+		return err
+	}
+
+	log.Info("Fax file deleted successfully")
+
 	return nil
 }
