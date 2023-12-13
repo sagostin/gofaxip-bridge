@@ -356,7 +356,7 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 	var logPattern string
 
 	entry := XFRecord{
-		Ts:        time.Time{},
+		Ts:        time.Now(),
 		Commid:    "",
 		Modem:     "",
 		Jobid:     "",
@@ -414,7 +414,7 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 		return XFRecord{}, fmt.Errorf("invalid duration format: %v", err)
 	}*/
 
-	entry.Ts = ts
+	entry.Ts = ts.UTC()
 	entry.Pages = uint(pageCount)
 	/*	entry.Jobtime = jobTime
 		entry.Conntime = connTime*/
