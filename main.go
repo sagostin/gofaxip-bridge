@@ -293,7 +293,7 @@ func processFile(filePath string, spoolerDir string) {
 
 			labels := map[string]string{"job": "xferfaxlog", "instance": "faxrelay"}
 			logEntry := LogEntry{
-				Timestamp: strconv.FormatInt(time.Now().UnixNano(), 10),
+				Timestamp: strconv.FormatInt(entry.Ts.UnixNano(), 10),
 				Line:      string(jsonData),
 			}
 			err = lokiClient.PushLog(labels, logEntry)
