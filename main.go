@@ -2,73 +2,153 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/fsnotify/fsnotify"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// FaxLogEntry represents a log entry for fax transmissions
-type FaxLogEntry struct {
-	Date           time.Time
-	Direction      string
-	ID             string
-	Device         string
-	FilePath       string
-	Transmission   string
-	DstPhoneNumber string
-	UnknownField1  string
-	UnknownField2  string
-	UnknownField3  string
-	UnknownField4  string
-	UnknownField5  string
-	PageCount      int
-	Duration       string
-	TotalTime      string
-	Success        int
-	Status         string
-	CallerID       string
-	SrcPhoneNumber string
-	FaxType        string
+// LokiClient holds the configuration for the Loki client.
+type LokiClient struct {
+	PushURL  string // URL to Loki's push API
+	Username string // Username for basic auth
+	Password string // Password for basic auth
 }
+
+// LogEntry represents a single log entry.
+type LogEntry struct {
+	Timestamp string `json:"timestamp"`
+	Line      string `json:"line"`
+}
+
+// LokiPushData represents the data structure required by Loki's push API.
+type LokiPushData struct {
+	Streams []LokiStream `json:"streams"`
+}
+
+// LokiStream represents a stream of logs with the same labels in Loki.
+type LokiStream struct {
+	Stream map[string]string `json:"stream"`
+	Values [][2]string       `json:"values"` // Array of [timestamp, line] tuples
+}
+
+// NewLokiClient creates a new client to interact with Loki.
+func NewLokiClient(pushURL, username, password string) *LokiClient {
+	return &LokiClient{
+		PushURL:  pushURL,
+		Username: username,
+		Password: password,
+	}
+}
+
+// PushLog sends a log entry to Loki.
+func (c *LokiClient) PushLog(labels map[string]string, entry LogEntry) error {
+	// Prepare the payload
+	payload := LokiPushData{
+		Streams: []LokiStream{
+			{
+				Stream: labels,
+				Values: [][2]string{{entry.Timestamp, entry.Line}},
+			},
+		},
+	}
+
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("error marshaling json: %w", err)
+	}
+
+	// Create a new request
+	req, err := http.NewRequest("POST", c.PushURL, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return fmt.Errorf("error creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Set basic auth if credentials are provided
+	if c.Username != "" && c.Password != "" {
+		req.SetBasicAuth(c.Username, c.Password)
+	}
+
+	// Send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("error sending request to Loki: %w", err)
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+
+		}
+	}(resp.Body)
+
+	responseBody, _ := ioutil.ReadAll(resp.Body)
+	fmt.Println("Loki response:", string(responseBody)) // Print response body for debugging
+	marshal, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	log.Warnf("Loki response: %s", string(marshal))
+
+	// Check the response status code
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("received non-200 response status: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// XFDirection is a custom type to represent the direction of the fax transmission.
+type XFDirection string
+
+// Constants for the XFDirection to ensure they can only be "RECV" or "SEND".
+const (
+	XflRECV XFDirection = "RECV"
+	XflSEND XFDirection = "SEND"
+)
+
+// XFRecord holds all data for a HylaFAX xferfaxlog record.
+type XFRecord struct {
+	Ts        time.Time   `json:"ts"`
+	Commid    string      `json:"commid,omitempty"`
+	Modem     string      `json:"modem,omitempty"`
+	Jobid     string      `json:"jobid,omitempty"`
+	Jobtag    string      `json:"jobtag,omitempty"`
+	Filename  string      `json:"filename,omitempty"`
+	Sender    string      `json:"sender,omitempty"`
+	Destnum   string      `json:"destnum,omitempty"`
+	RemoteID  string      `json:"remoteID,omitempty"`
+	Params    string      `json:"params,omitempty"`
+	Pages     uint        `json:"pages,omitempty"`
+	Jobtime   string      `json:"jobtime,omitempty"`
+	Conntime  string      `json:"conntime,omitempty"`
+	Reason    string      `json:"reason,omitempty"`
+	Cidname   string      `json:"cidname,omitempty"`
+	Cidnum    string      `json:"cidnum,omitempty"`
+	Owner     string      `json:"owner,omitempty"`
+	Dcs       string      `json:"dcs,omitempty"`
+	Direction XFDirection `json:"direction,omitempty"`
+}
+
+var lokiURL, lokiUser, lokiPass string
 
 var processedFilePath string // New flag for log file path
 var fsWatcher *fsnotify.Watcher
-
-var (
-	sentFaxes = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "fax_sent_total",
-		Help: "Total number of sent faxes",
-	})
-	receivedFaxes = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "fax_received_total",
-		Help: "Total number of received faxes",
-	})
-	failedSent = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "fax_failed_sent_total",
-		Help: "Total number of failed sent faxes",
-	})
-	failedRecv = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "fax_failed_recv_total",
-		Help: "Total number of failed received faxes",
-	})
-)
-
-func init() {
-	prometheus.MustRegister(receivedFaxes)
-	prometheus.MustRegister(sentFaxes)
-}
+var lokiClient *LokiClient
 
 func main() {
 	var logFilePath string
@@ -76,13 +156,18 @@ func main() {
 	var logDirPath string // New variable for log directory path
 
 	flag.StringVar(&logFilePath, "path", "/var/log/gofaxip/xferfaxlog", "Path to the log file")
-	flag.Parse()
-
 	flag.StringVar(&spoolerPath, "spoolerPath", "/var/spool/hylafax", "Path to the spooler directory")
+	flag.StringVar(&logDirPath, "logDir", "./log", "Path to the log directory") // New flag for log directory
+
+	flag.StringVar(&lokiURL, "lokiURL", "", "URL to Loki's push API")
+	flag.StringVar(&lokiUser, "lokiUser", "", "Username for Loki")
+	flag.StringVar(&lokiPass, "lokiPass", "", "Password for Loki")
+
 	flag.Parse()
 
-	flag.StringVar(&logDirPath, "logDir", "./log", "Path to the log directory") // New flag for log directory
-	flag.Parse()
+	if lokiURL != "" {
+		lokiClient = NewLokiClient(lokiURL, lokiUser, lokiPass)
+	}
 
 	// Ensure log directory exists
 	if err := os.MkdirAll(logDirPath, os.ModePerm); err != nil {
@@ -165,7 +250,12 @@ func processFile(filePath string, spoolerDir string) {
 		log.Errorf("Error opening log file: %s", err)
 		return
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+
+		}
+	}(file)
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -186,6 +276,27 @@ func processFile(filePath string, spoolerDir string) {
 		if err != nil {
 			log.Errorf("Error appending to processed lines log: %s", err)
 		}
+
+		// If Loki client is configured, send the log entry to Loki
+		if lokiClient != nil {
+			jsonData, err := json.Marshal(entry)
+			if err != nil {
+				log.Errorf("Failed to marshal log entry: %v", err)
+				continue
+			}
+
+			labels := map[string]string{"job": "xferfaxlog", "instance": "faxrelay"}
+			logEntry := LogEntry{
+				Timestamp: strconv.FormatInt(time.Now().UnixNano(), 10),
+				Line:      string(jsonData),
+			}
+			err = lokiClient.PushLog(labels, logEntry)
+			if err != nil {
+				fmt.Printf("Failed to push log to Loki: %v\n", err)
+			} else {
+				fmt.Println("Log pushed to Loki successfully.")
+			}
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -199,7 +310,12 @@ func appendToLogFile(line string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func(f *os.File) {
+		err := f.Close()
+		if err != nil {
+
+		}
+	}(f)
 
 	_, err = f.WriteString(line + "\n")
 	return err
@@ -226,58 +342,109 @@ func readLines(filePath string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
-func parseLogLine(line string, spoolerDir string, logFilePath string) (FaxLogEntry, error) {
+var recvPattern = `(?P<Date>\d{2}\/\d{2}\/\d{2} \d{2}:\d{2})\s+(?P<Direction>RECV)\s+(?P<CommID>\w+)\s+(?P<Modem>\w+)\s+(?P<Filename>\S+)\s+""\s+fax\s+"(?P<DestPhoneNumber>\d+)"\s+"(?P<RemoteID>[^"]*)"\s+(?P<Params>\d+)\t+(?P<Pages>\d+)\t(?P<JobTime>\d+:\d{2}:\d{2})\s+(?P<ConnTime>\d+:\d{2}:\d{2})\t"(?P<Reason>[^"]*)"\s+""(?P<CIDName>[^"]*)""\s+""(?P<CIDNumber>[^"]*)""\s+""+\s+""+\s+"(?P<Dcs>[^"]*)"`
+var sendPattern = `(?P<Date>\d{2}\/\d{2}\/\d{2} \d{2}:\d{2})\s+(?P<Direction>SEND)\s+(?P<CommID>\w+)\s+(?P<Modem>\w+)\s+(?P<JobID>\S+)\s+"(?P<JobTag>[^"]*)"\s+(?P<Sender>\S+)\s+"(?P<DestPhoneNumber>\d+)"\s+"(?P<RemoteID>[^"]*)"\s+(?P<Params>\d+)\t+(?P<Pages>\d+)\t(?P<JobTime>\d+:\d{2}:\d{2})\s+(?P<ConnTime>\d+:\d{2}:\d{2})\t"(?P<Reason>[^"]*)"\s+""\s+""\s+""\s+"(?P<CIDNumber>[^"]*)"\s+"(?P<Dcs>[^"]*)"`
+
+func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord, error) {
 	//log.Info(line)
-	parts := strings.Split(line, "\t")
-	if len(parts) < 19 {
-		return FaxLogEntry{}, fmt.Errorf("invalid log line: %s", line)
+	var logPattern string
+
+	entry := XFRecord{
+		Ts:        time.Time{},
+		Commid:    "",
+		Modem:     "",
+		Jobid:     "",
+		Jobtag:    "",
+		Filename:  "",
+		Sender:    "",
+		Destnum:   "",
+		RemoteID:  "",
+		Params:    "",
+		Pages:     0,
+		Jobtime:   "",
+		Conntime:  "",
+		Reason:    "",
+		Cidname:   "",
+		Cidnum:    "",
+		Owner:     "",
+		Dcs:       "",
+		Direction: "",
 	}
 
-	parts2 := strings.Split(parts[0], " ")
+	if strings.Contains(line, "RECV") {
+		entry.Direction = XflRECV
+		logPattern = recvPattern
+	} else if strings.Contains(line, "SEND") {
+		entry.Direction = XflSEND
+		logPattern = sendPattern
+	} else {
+		return XFRecord{}, fmt.Errorf("invalid fax direction")
+	}
 
-	dateStr := fmt.Sprintf("%s %s", parts2[0], parts2[1])
-	date, err := time.Parse("01/02/06 15:04", dateStr)
+	r := regexp.MustCompile(logPattern)
+	match := r.FindStringSubmatch(line)
+
+	if match == nil {
+		return XFRecord{}, fmt.Errorf("invalid log line format")
+	}
+
+	ts, err := time.Parse("01/02/06 15:04", match[r.SubexpIndex("Date")])
 	if err != nil {
-		return FaxLogEntry{}, fmt.Errorf("invalid date format: %v", err)
+		return XFRecord{}, fmt.Errorf("invalid date format: %v", err)
 	}
 
-	pageCount, err := strconv.Atoi(strings.Replace(parts[10], " ", "", -1))
+	pageCount, err := strconv.Atoi(match[r.SubexpIndex("Pages")])
 	if err != nil {
-		return FaxLogEntry{}, fmt.Errorf("invalid page count: %v", err)
+		return XFRecord{}, fmt.Errorf("invalid page count: %v", err)
 	}
 
-	//log.Info(parts, parts2)
-
-	entry := FaxLogEntry{
-		Date:           date,
-		Direction:      strings.Replace(parts[1], " ", "", -1),
-		ID:             strings.Replace(parts[2], " ", "", -1),
-		Device:         strings.Replace(parts[3], " ", "", -1),
-		FilePath:       strings.Replace(parts[4], " ", "", -1),
-		UnknownField1:  strings.Replace(parts[5], " ", "", -1),
-		Transmission:   strings.Replace(parts[6], " ", "", -1),
-		DstPhoneNumber: strings.Replace(strings.Replace(parts[7], " ", "", -1), "\"", "", -1),
-		UnknownField2:  strings.Replace(parts[8], " ", "", -1),
-		PageCount:      pageCount,
-		Duration:       strings.Replace(parts[11], " ", "", -1),
-		TotalTime:      strings.Replace(parts[12], " ", "", -1),
-		Status:         strings.Replace(strings.Replace(parts[13], " ", "", -1), "\"", "", -1),
-		CallerID:       strings.Replace(parts[14], "\"", "", -1), // Caller ID is surrounded by "
-		SrcPhoneNumber: strings.Replace(strings.Replace(parts[15], " ", "", -1), "\"", "", -1),
-		UnknownField4:  strings.Replace(parts[16], " ", "", -1),
-		UnknownField5:  strings.Replace(parts[17], " ", "", -1),
-		FaxType:        strings.Replace(parts[18], " ", "", -1),
+	/*jobTime, err := time.ParseDuration(match[r.SubexpIndex("JobTime")])
+	if err != nil {
+		return XFRecord{}, fmt.Errorf("invalid duration format: %v", err)
 	}
+
+	connTime, err := time.ParseDuration(match[r.SubexpIndex("ConnTime")])
+	if err != nil {
+		return XFRecord{}, fmt.Errorf("invalid duration format: %v", err)
+	}*/
+
+	entry.Ts = ts
+	entry.Pages = uint(pageCount)
+	/*	entry.Jobtime = jobTime
+		entry.Conntime = connTime*/
+	entry.Destnum = match[r.SubexpIndex("DestPhoneNumber")]
+	entry.Commid = match[r.SubexpIndex("CommID")]
+	entry.Modem = match[r.SubexpIndex("Modem")]
+	entry.RemoteID = match[r.SubexpIndex("RemoteID")]
+	entry.Reason = match[r.SubexpIndex("Reason")]
+
+	entry.Jobtime = match[r.SubexpIndex("JobTime")]
+	entry.Conntime = match[r.SubexpIndex("ConnTime")]
+
+	if strings.Contains(line, "RECV") {
+		entry.Filename = match[r.SubexpIndex("Filename")]
+		entry.Cidnum = match[r.SubexpIndex("CIDNumber")]
+		entry.Cidname = match[r.SubexpIndex("CIDName")]
+	} else if strings.Contains(line, "SEND") {
+		entry.Direction = XflSEND
+		entry.Jobtag = match[r.SubexpIndex("JobTag")]
+		entry.Jobid = match[r.SubexpIndex("JobID")]
+		entry.Sender = match[r.SubexpIndex("Sender")]
+	} else {
+		log.Warn("Unknown fax direction...")
+	}
+
+	entry.Dcs = match[r.SubexpIndex("Dcs")]
 
 	marshal, _ := json.Marshal(entry)
 	log.Info(string(marshal))
 
 	switch entry.Direction {
 	case "RECV":
-		receivedFaxes.Inc()
+		//receivedFaxes.Inc()
 		log.Info("Received fax...")
-		if entry.Status != "OK" {
-			failedRecv.Inc()
+		if entry.Reason != "OK" {
+			//failedRecv.Inc()
 			log.Warning("Failed to receive fax...")
 			break
 		} else {
@@ -288,10 +455,10 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (FaxLogEnt
 		}
 		break
 	case "SEND":
-		sentFaxes.Inc()
+		//sentFaxes.Inc()
 		log.Warning("Sent fax... not processing...")
-		if entry.Status != "OK" {
-			failedRecv.Inc()
+		if entry.Reason != "OK" {
+			//failedRecv.Inc()
 			log.Warning("Failed to bridge fax...")
 			break
 		}
@@ -305,32 +472,32 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (FaxLogEnt
 	tempFile, err := ioutil.TempFile("", "temp")
 	if err != nil {
 		log.Errorf("ERROR: %s", err)
-		return FaxLogEntry{}, err // Make sure to return here to avoid nil pointer dereference
+		return XFRecord{}, err // Make sure to return here to avoid nil pointer dereference
 	}
 
 	// Set file permissions to be readable and writable by all users
 	if err := tempFile.Chmod(0666); err != nil {
 		log.Errorf("ERROR: %s", err)
-		return FaxLogEntry{}, err
+		return XFRecord{}, err
 	}
 
 	// Read the file line by line
 	lines, err := readLines(logFilePath)
 	if err != nil {
 		log.Errorf("ERROR: %s", err)
-		return FaxLogEntry{}, err
+		return XFRecord{}, err
 	}
 
-	var removedLine string
+	/*var removedLine string*/
 	for _, line1 := range lines {
 		if line1 == line {
-			removedLine = line1
+			//removedLine = line1
 			continue // Skip the line to remove
 		}
 		_, err := tempFile.WriteString(line1 + "\n") // It should be line1 here, not line
 		if err != nil {
 			log.Errorf("ERROR: %s", err)
-			return FaxLogEntry{}, err
+			return XFRecord{}, err
 		}
 	}
 
@@ -339,40 +506,40 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (FaxLogEnt
 		log.Errorf("ERROR: %s", err)
 	}
 
-	// Write the removed line to the log file
+	/*// Write the removed line to the log file
 	err = appendToLogFile(removedLine)
 	if err != nil {
 		log.Errorf("ERROR: %s", err)
-		return FaxLogEntry{}, err
-	}
+		return XFRecord{}, err
+	}*/
 
 	// Replace the original file with the temporary file
 	err = os.Rename(tempFile.Name(), logFilePath)
 	if err != nil {
 		log.Errorf("ERROR: %s", err)
-		return FaxLogEntry{}, err
+		return XFRecord{}, err
 	}
 
 	err = fsWatcher.Add(logFilePath)
 	if err != nil {
-		return FaxLogEntry{}, err
+		return XFRecord{}, err
 	}
 
 	return entry, nil
 }
 
-func sendFax(entry FaxLogEntry, spoolDir string) error {
+func sendFax(entry XFRecord, spoolDir string) error {
 	time.Sleep(2 * time.Second) // wait for fax to be written to disk
 	// Example command: sendfax -d destination_number -c caller_id file_path
 	log.Info("Sending fax...")
 	//log.Warning("/bin/bash", "-c", "sendfax", "-o", entry.SrcPhoneNumber, "-d", entry.DstPhoneNumber, "-c", entry.CallerID, fmt.Sprintf("%s/%s", spoolDir, entry.FilePath))
 	// sendfax -n -S 2507620300 -c "TOPS Telecom" -d 2508591501 /var/spool/hylafax/recvq/fax00000343.tif
 	cmd := exec.Command("/bin/bash", "-c", "sendfax"+
-		" -n -S "+entry.SrcPhoneNumber+
-		" -o "+entry.SrcPhoneNumber+
-		" -c \""+entry.CallerID+
-		"\" -d "+entry.DstPhoneNumber+
-		" "+fmt.Sprintf("%s/%s", spoolDir, entry.FilePath))
+		" -n -S "+entry.Cidnum+
+		" -o "+entry.Cidnum+
+		" -c \""+entry.Cidname+
+		"\" -d "+entry.Destnum+
+		" "+fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
 	_, err := cmd.CombinedOutput()
 	//log.Info(string(output))
 	if err != nil {
@@ -380,7 +547,7 @@ func sendFax(entry FaxLogEntry, spoolDir string) error {
 	}
 
 	// Delete the fax file after sending
-	err = os.Remove(fmt.Sprintf("%s/%s", spoolDir, entry.FilePath))
+	err = os.Remove(fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
 	if err != nil {
 		log.Errorf("Failed to delete fax file: %s", err)
 		return err
