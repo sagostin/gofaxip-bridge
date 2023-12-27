@@ -542,7 +542,7 @@ func sendFax(entry XFRecord, spoolDir string) error {
 	// sendfax -n -S 2507620300 -c "TOPS Telecom" -d 2508591501 /var/spool/hylafax/recvq/fax00000343.tif
 	cmd := exec.Command("/bin/bash", "-c", "sendfax"+
 		" -n -S "+entry.Cidnum+
-		" -o "+entry.Cidnum+
+		" -f "+entry.Cidnum+
 		" -c \""+entry.Cidname+
 		"\" -d "+entry.Destnum+
 		" "+fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
