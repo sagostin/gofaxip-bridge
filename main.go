@@ -540,9 +540,15 @@ func sendFax(entry XFRecord, spoolDir string) error {
 	log.Info("Sending fax...")
 	//log.Warning("/bin/bash", "-c", "sendfax", "-o", entry.SrcPhoneNumber, "-d", entry.DstPhoneNumber, "-c", entry.CallerID, fmt.Sprintf("%s/%s", spoolDir, entry.FilePath))
 	// sendfax -n -S 2507620300 -c "TOPS Telecom" -d 2508591501 /var/spool/hylafax/recvq/fax00000343.tif
+	log.Warn("sendfax" +
+		" -n -S " + entry.Cidnum +
+		" -o " + entry.Cidnum +
+		" -c \"" + entry.Cidname +
+		"\" -d " + entry.Destnum +
+		" " + fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
 	cmd := exec.Command("/bin/bash", "-c", "sendfax"+
 		" -n -S "+entry.Cidnum+
-		" -f "+entry.Cidnum+
+		" -o "+entry.Cidnum+
 		" -c \""+entry.Cidname+
 		"\" -d "+entry.Destnum+
 		" "+fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
