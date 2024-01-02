@@ -348,7 +348,7 @@ func readLines(filePath string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
-var recvPattern = `(?P<Date>\d{2}\/\d{2}\/\d{2} \d{2}:\d{2})\s+(?P<Direction>RECV)\s+(?P<CommID>\w+)\s+(?P<Modem>\w+)\s+(?P<Filename>\S+)\s+""\s+fax\s+"(?P<DestPhoneNumber>\d+)"\s+"(?P<RemoteID>[^"]*)"\s+(?P<Params>\d+)\t+(?P<Pages>\d+)\t(?P<JobTime>\d+:\d{2}:\d{2})\s+(?P<ConnTime>\d+:\d{2}:\d{2})\t"(?P<Reason>[^"]*)"\s+""(?P<CIDName>[^"]*)""\s+""(?P<CIDNumber>[^"]*)""\s+""+\s+""+\s+"(?P<Dcs>[^"]*)"`
+var recvPattern = `(?P<Date>\d{2}\/\d{2}\/\d{2} \d{2}:\d{2})\s+(?P<Direction>RECV)\s+(?P<CommID>\w+)\s+(?P<Modem>\w+)\s+(?P<Filename>\S+)\s+""\s+fax\s+"(?P<DestPhoneNumber>\d+)"\s+"(?P<RemoteID>[^"]*)"(\s+|)(?P<Params>\d+|)\t+(?P<Pages>\d+)\t(?P<JobTime>\d+:\d{2}:\d{2})\s+(?P<ConnTime>\d+:\d{2}:\d{2})\t"(?P<Reason>[^"]*)"\s+""(?P<CIDName>[^"]*)""\s+""(?P<CIDNumber>[^"]*)""\s+""+\s+""+\s+"(?P<Dcs>[^"]*)"`
 var sendPattern = `(?P<Date>\d{2}\/\d{2}\/\d{2} \d{2}:\d{2})\s+(?P<Direction>SEND)\s+(?P<CommID>\w+)\s+(?P<Modem>\w+)\s+(?P<JobID>\S+)\s+"(?P<JobTag>[^"]*)"\s+(?P<Sender>\S+)\s+"(?P<DestPhoneNumber>\d+)"\s+"(?P<RemoteID>[^"]*)"\s+(?P<Params>\d+)\t+(?P<Pages>\d+)\t(?P<JobTime>\d+:\d{2}:\d{2})\s+(?P<ConnTime>\d+:\d{2}:\d{2})\t"(?P<Reason>[^"]*)"\s+""\s+""\s+""\s+"(?P<CIDNumber>[^"]*)"\s+"(?P<Dcs>[^"]*)"`
 
 func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord, error) {
@@ -391,7 +391,7 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 	match := r.FindStringSubmatch(line)
 
 	if match == nil {
-		return XFRecord{}, fmt.Errorf("invalid log line format")
+		return XFRecord{}, fmt.Errorf("invalid log line format: "+line, "pattern: "+logPattern)
 	}
 
 	ts, err := time.Parse("01/02/06 15:04", match[r.SubexpIndex("Date")])
