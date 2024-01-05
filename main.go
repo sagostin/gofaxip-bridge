@@ -273,7 +273,7 @@ func processFile(filePath string, spoolerDir string) {
 		entry, err := parseLogLine(line, spoolerDir, filePath)
 		if err != nil {
 			log.Errorf("ERROR: %s", err)
-			continue
+			break
 		}
 
 		log.Printf("%+v\n", entry)
@@ -348,7 +348,7 @@ func readLines(filePath string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
-var recvPattern = `(?P<Date>\d{2}\/\d{2}\/\d{2} \d{2}:\d{2})\s+(?P<Direction>RECV)\s+(?P<CommID>\w+)\s+(?P<Modem>\w+)\s+(?P<Filename>\S+)\s+""\s+fax\s+"(?P<DestPhoneNumber>\d+)"\s+"(?P<RemoteID>[^"]*)"(\s+|)(?P<Params>\d+|)\t+(?P<Pages>\d+)\t(?P<JobTime>\d+:\d{2}:\d{2})\s+(?P<ConnTime>\d+:\d{2}:\d{2})\t"(?P<Reason>[^"]*)"\s+""(?P<CIDName>[^"]*)""\s+""(?P<CIDNumber>[^"]*)""\s+(""+\s+|"")""+\s+"(?P<Dcs>[^"]*)"`
+var recvPattern = `(?P<Date>\d{2}\/\d{2}\/\d{2} \d{2}:\d{2})\s+(?P<Direction>RECV)\s+(?P<CommID>\w+)\s+(?P<Modem>\w+)\s+(?P<Filename>\S+)\s+""\s+fax\s+"(?P<DestPhoneNumber>\d+)"\s+"(?P<RemoteID>[^"]*)"(\s+|)(?P<Params>\d+|)\t+(?P<Pages>\d+)\t(?P<JobTime>\d+:\d{2}:\d{2})\s+(?P<ConnTime>\d+:\d{2}:\d{2})\t"(?P<Reason>[^"]*)"\s+""(?P<CIDName>[^"]*)""(\s+|)""(?P<CIDNumber>[^"]*)""\s+(""+\s+|"")""+\s+"(?P<Dcs>[^"]*)"`
 var sendPattern = `(?P<Date>\d{2}\/\d{2}\/\d{2} \d{2}:\d{2})\s+(?P<Direction>SEND)\s+(?P<CommID>\w+)\s+(?P<Modem>\w+)\s+(?P<JobID>\S+)\s+"(?P<JobTag>[^"]*)"\s+(?P<Sender>\S+)\s+"(?P<DestPhoneNumber>\d+)"\s+"(?P<RemoteID>[^"]*)"\s+(?P<Params>\d+)\t+(?P<Pages>\d+)\t(?P<JobTime>\d+:\d{2}:\d{2})\s+(?P<ConnTime>\d+:\d{2}:\d{2})\t"(?P<Reason>[^"]*)"\s+""\s+""\s+""\s+"(?P<CIDNumber>[^"]*)"\s+"(?P<Dcs>[^"]*)"`
 
 func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord, error) {
@@ -404,16 +404,6 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 		return XFRecord{}, fmt.Errorf("invalid page count: %v", err)
 	}
 
-	/*jobTime, err := time.ParseDuration(match[r.SubexpIndex("JobTime")])
-	if err != nil {
-		return XFRecord{}, fmt.Errorf("invalid duration format: %v", err)
-	}
-
-	connTime, err := time.ParseDuration(match[r.SubexpIndex("ConnTime")])
-	if err != nil {
-		return XFRecord{}, fmt.Errorf("invalid duration format: %v", err)
-	}*/
-
 	entry.Ts = ts.UTC()
 	entry.Pages = uint(pageCount)
 	/*	entry.Jobtime = jobTime
@@ -431,6 +421,7 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 		entry.Filename = match[r.SubexpIndex("Filename")]
 		entry.Cidnum = match[r.SubexpIndex("CIDNumber")]
 		entry.Cidname = match[r.SubexpIndex("CIDName")]
+		entry.Direction = XflRECV
 	} else if strings.Contains(line, "SEND") {
 		entry.Direction = XflSEND
 		entry.Jobtag = match[r.SubexpIndex("JobTag")]
@@ -452,11 +443,12 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 		if entry.Reason != "OK" {
 			//failedRecv.Inc()
 			log.Warning("Failed to receive fax...")
-			break
+			return XFRecord{}, nil
 		} else {
 			err := sendFax(entry, spoolerDir)
 			if err != nil {
 				log.Errorf("Failed to send fax: %s", err)
+				return XFRecord{}, err
 			}
 		}
 		break
@@ -466,15 +458,15 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 		if entry.Reason != "OK" {
 			//failedRecv.Inc()
 			log.Warning("Failed to bridge fax...")
-			break
+			return XFRecord{}, nil
 		}
 		break
 	default:
 		log.Warning("Unknown fax direction...")
-		break
+		return XFRecord{}, nil
 	}
 
-	// Create a temporary file for writing
+	/*// Create a temporary file for writing
 	tempFile, err := ioutil.TempFile("", "temp")
 	if err != nil {
 		log.Errorf("ERROR: %s", err)
@@ -495,7 +487,7 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 	}
 
 	/*var removedLine string*/
-	for _, line1 := range lines {
+	/*for _, line1 := range lines {
 		if line1 == line {
 			//removedLine = line1
 			continue // Skip the line to remove
@@ -510,7 +502,7 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 	err = tempFile.Close()
 	if err != nil {
 		log.Errorf("ERROR: %s", err)
-	}
+	}*/
 
 	/*// Write the removed line to the log file
 	err = appendToLogFile(removedLine)
@@ -519,7 +511,7 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 		return XFRecord{}, err
 	}*/
 
-	// Replace the original file with the temporary file
+	/*// Replace the original file with the temporary file
 	err = os.Rename(tempFile.Name(), logFilePath)
 	if err != nil {
 		log.Errorf("ERROR: %s", err)
@@ -529,7 +521,7 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 	err = fsWatcher.Add(logFilePath)
 	if err != nil {
 		return XFRecord{}, err
-	}
+	}*/
 
 	return entry, nil
 }
@@ -544,13 +536,21 @@ func sendFax(entry XFRecord, spoolDir string) error {
 		" -n -S " + entry.Cidnum +
 		" -o " + entry.Cidnum +
 		" -c \"" + entry.Cidname +
-		"\" -d " + entry.Destnum +
+		"\" -k \"now + 8 hours\"" +
+		" -T 15" +
+		" -t 15" +
+		//" -I \"10min\"" +
+		" -d " + entry.Destnum +
 		" " + fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
 	cmd := exec.Command("/bin/bash", "-c", "sendfax"+
 		" -n -S "+entry.Cidnum+
 		" -o "+entry.Cidnum+
 		" -c \""+entry.Cidname+
-		"\" -d "+entry.Destnum+
+		"\" -k \"now + 8 hours\""+
+		" -T 15"+
+		" -t 15"+
+		//" -I 10min"+
+		" -d "+entry.Destnum+
 		" "+fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
 	_, err := cmd.CombinedOutput()
 	//log.Info(string(output))
