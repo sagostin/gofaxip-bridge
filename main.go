@@ -443,12 +443,12 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 		if entry.Reason != "OK" {
 			//failedRecv.Inc()
 			log.Warning("Failed to receive fax...")
-			return XFRecord{}, nil
+			return entry, nil
 		} else {
 			err := sendFax(entry, spoolerDir)
 			if err != nil {
 				log.Errorf("Failed to send fax: %s", err)
-				return XFRecord{}, err
+				return entry, err
 			}
 		}
 		break
@@ -458,12 +458,12 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 		if entry.Reason != "OK" {
 			//failedRecv.Inc()
 			log.Warning("Failed to bridge fax...")
-			return XFRecord{}, nil
+			return entry, nil
 		}
 		break
 	default:
 		log.Warning("Unknown fax direction...")
-		return XFRecord{}, nil
+		return entry, nil
 	}
 
 	/*// Create a temporary file for writing
