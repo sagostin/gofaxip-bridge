@@ -536,7 +536,7 @@ func sendFax(entry XFRecord, spoolDir string) error {
 		" -n -S " + entry.Cidnum +
 		" -o " + entry.Cidnum +
 		" -c \"" + entry.Cidname +
-		"\" -k \"now + 8 hours\"" +
+		"\" -k \"now + 2 days\"" +
 		" -T 50" +
 		" -t 50" +
 		//" -I \"10min\"" +
@@ -546,7 +546,7 @@ func sendFax(entry XFRecord, spoolDir string) error {
 		" -n -S "+entry.Cidnum+
 		" -o "+entry.Cidnum+
 		" -c \""+entry.Cidname+
-		"\" -k \"now + 8 hours\""+
+		"\" -k \"now + 2 days\""+
 		" -T 50"+
 		" -t 50"+
 		//" -I 10min"+
