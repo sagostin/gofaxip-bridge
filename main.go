@@ -559,13 +559,13 @@ func sendFax(entry XFRecord, spoolDir string) error {
 	}
 
 	// Delete the fax file after sending
-	/*err = os.Remove(fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
+	err = os.Remove(fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
 	if err != nil {
 		log.Errorf("Failed to delete fax file: %s", err)
 		return err
 	}
 
-	log.Info("Fax file deleted successfully")*/
+	log.Info("Fax file deleted successfully")
 
 	// todo convert file deletion to a cronjob
 
