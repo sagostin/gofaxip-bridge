@@ -165,6 +165,9 @@ func main() {
 
 	flag.Parse()
 
+	taskQueue := make(chan Task)
+	go processTasks(taskQueue)
+
 	if lokiURL != "" {
 		lokiClient = NewLokiClient(lokiURL, lokiUser, lokiPass)
 
@@ -213,7 +216,7 @@ func main() {
 	reAddFileToWatcher()
 
 	// Process file initially
-	go processFile(logFilePath, spoolerPath)
+	go processFile(logFilePath, spoolerPath, taskQueue)
 
 	// Watcher and polling loop
 	go func() {
@@ -221,7 +224,7 @@ func main() {
 			select {
 			case event := <-watcher.Events:
 				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove|fsnotify.Chmod) != 0 {
-					processFile(logFilePath, spoolerPath)
+					processFile(logFilePath, spoolerPath, taskQueue)
 					if event.Op&(fsnotify.Rename|fsnotify.Remove) != 0 {
 						reAddFileToWatcher()
 					}
@@ -230,7 +233,7 @@ func main() {
 				log.Errorf("Watcher error: %s", err)
 				reAddFileToWatcher() // Attempt to recover from watcher error
 			case <-time.After(10 * time.Second): // Polling interval
-				processFile(logFilePath, spoolerPath) // Periodic recheck
+				processFile(logFilePath, spoolerPath, taskQueue) // Periodic recheck
 			}
 		}
 	}()
@@ -240,7 +243,7 @@ func main() {
 }
 
 // processFile processes the log file, skipping already processed lines
-func processFile(filePath string, spoolerDir string) {
+func processFile(filePath string, spoolerDir string, queueTask chan Task) {
 	processedLines, err := readLines(processedFilePath)
 	if err != nil {
 		log.Errorf("Error reading processed lines log: %s", err)
@@ -270,7 +273,7 @@ func processFile(filePath string, spoolerDir string) {
 			continue // Skip already processed lines
 		}
 
-		entry, err := parseLogLine(line, spoolerDir, filePath)
+		entry, err := parseLogLine(line, spoolerDir, queueTask)
 		if err != nil {
 			log.Errorf("ERROR: %s", err)
 			break
@@ -351,7 +354,7 @@ func readLines(filePath string) ([]string, error) {
 var recvPattern = `(?P<Date>\d{2}\/\d{2}\/\d{2} \d{2}:\d{2})\s+(?P<Direction>RECV)\s+(?P<CommID>\w+)\s+(?P<Modem>\w+)\s+(?P<Filename>\S+)\s+""\s+fax\s+"(?P<DestPhoneNumber>\d+)"\s+"(?P<RemoteID>[^"]*)"(\s+|)(?P<Params>\d+|)\t+(?P<Pages>\d+)\t(?P<JobTime>\d+:\d{2}:\d{2})\s+(?P<ConnTime>\d+:\d{2}:(\d{2}|\d{1}))(\t|)"(?P<Reason>[^"]*)"\s+""(?P<CIDName>[^"]*)""(\s+|)""(?P<CIDNumber>[^"]*)""(\s+(""+\s+|"")""+\s+"(?P<Dcs>[^"]*)"|)`
 var sendPattern = `(?P<Date>\d{2}\/\d{2}\/\d{2} \d{2}:\d{2})\s+(?P<Direction>SEND)\s+(?P<CommID>\w+)\s+(?P<Modem>\w+)\s+(?P<JobID>\S+)\s+"(?P<JobTag>[^"]*)"\s+(?P<Sender>\S+)\s+"(?P<DestPhoneNumber>\d+)"\s+"(?P<RemoteID>[^"]*)"\s+(?P<Params>\d+)\t+(?P<Pages>\d+)\t(?P<JobTime>\d+:\d{2}:\d{2})(\s+|)(?P<ConnTime>\d+:\d{2}:\d{2})\t"(?P<Reason>[^"]*)"\s+""\s+""\s+""\s+"(?P<CIDNumber>[^"]*)"\s+"(?P<Dcs>[^"]*)"`
 
-func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord, error) {
+func parseLogLine(line string, spoolerDir string, taskQueue chan Task) (XFRecord, error) {
 	//log.Info(line)
 	var logPattern string
 
@@ -450,6 +453,7 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 				log.Errorf("Failed to send fax: %s", err)
 				return entry, err
 			}
+			taskQueue <- Task{spoolDir: spoolerDir, filename: entry.Filename}
 		}
 		break
 	case "SEND":
@@ -526,6 +530,28 @@ func parseLogLine(line string, spoolerDir string, logFilePath string) (XFRecord,
 	return entry, nil
 }
 
+type Task struct {
+	spoolDir string
+	filename string
+}
+
+// processTasks handles tasks from the queue
+func processTasks(taskQueue <-chan Task) {
+	for task := range taskQueue {
+		// Introduce a delay of 30 minutes
+		time.Sleep(15 * time.Minute)
+
+		// Code to remove the file
+		err := os.Remove(fmt.Sprintf("%s/%s", task.spoolDir, task.filename))
+		if err != nil {
+			log.Errorf("Failed to delete fax file: %s", err)
+			continue
+		}
+
+		log.Info("Fax file deleted successfully")
+	}
+}
+
 func sendFax(entry XFRecord, spoolDir string) error {
 	time.Sleep(2 * time.Second) // wait for fax to be written to disk
 	// Example command: sendfax -d destination_number -c caller_id file_path
@@ -558,14 +584,14 @@ func sendFax(entry XFRecord, spoolDir string) error {
 		return fmt.Errorf("sendfax command failed: %w", err)
 	}
 
-	// Delete the fax file after sending
+	/*// Delete the fax file after sending
 	err = os.Remove(fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
 	if err != nil {
 		log.Errorf("Failed to delete fax file: %s", err)
 		return err
 	}
 
-	log.Info("Fax file deleted successfully")
+	log.Info("Fax file deleted successfully")*/
 
 	// todo convert file deletion to a cronjob
 
