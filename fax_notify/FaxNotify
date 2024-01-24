@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# shellcheck disable=SC2164
+cd /root/gofaxip-bridge/fax_notify
+
 if [ $# -lt 2 ]; then
     echo "Usage: $0 <qfile> <why>"
     exit 1

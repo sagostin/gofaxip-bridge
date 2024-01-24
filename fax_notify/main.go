@@ -88,8 +88,8 @@ func readQfile(filename string) (QFileData, error) {
 		DestNum:    qfile.GetString("number"),
 		DestCid:    qfile.GetString("external"),
 		Pages:      totPages,
-		TotalDials: totTries,
-		TotalTries: totDials,
+		TotalDials: totDials,
+		TotalTries: totTries,
 		Status:     qfile.GetString("status"),
 	}
 
