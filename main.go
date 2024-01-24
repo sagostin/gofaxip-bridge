@@ -563,8 +563,8 @@ func sendFax(entry XFRecord, spoolDir string) error {
 		" -o " + entry.Cidnum +
 		" -c \"" + entry.Cidname +
 		"\" -k \"now + 2 days\"" +
-		" -T 50" +
-		" -t 50" +
+		" -T 10" +
+		" -t 10" +
 		//" -I \"10min\"" +
 		" -d " + entry.Destnum +
 		" " + fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
@@ -573,8 +573,8 @@ func sendFax(entry XFRecord, spoolDir string) error {
 		" -o "+entry.Cidnum+
 		" -c \""+entry.Cidname+
 		"\" -k \"now + 2 days\""+
-		" -T 50"+
-		" -t 50"+
+		" -T 10"+
+		" -t 10"+
 		//" -I 10min"+
 		" -d "+entry.Destnum+
 		" "+fmt.Sprintf("%s/%s", spoolDir, entry.Filename))

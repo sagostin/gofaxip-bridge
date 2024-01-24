@@ -13,5 +13,13 @@ set -o allexport
 source .env
 set +o allexport
 
-# Run the Go binary with only the first two arguments
-./fax_notify "$qfile" "$why"
+# Define an array of "why" values that should trigger the fax_notify script
+fax_notify_whys=("removed" "killed")
+
+# Check if the "why" value is in the array
+# shellcheck disable=SC2199
+# shellcheck disable=SC2076
+if [[ " ${fax_notify_whys[@]} " =~ " $why " ]]; then
+    # Run the fax_notify Go binary for "removed" or "killed"
+    ./fax_notify "$qfile" "$why"
+fi
