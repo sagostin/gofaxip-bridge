@@ -19,7 +19,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(os.Args) != 3 {
+	if len(os.Args) < 3 {
 		fmt.Println("Usage: notify <qfile> <why>")
 		os.Exit(1)
 	}

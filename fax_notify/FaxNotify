@@ -1,0 +1,17 @@
+#!/bin/bash
+
+if [ $# -lt 2 ]; then
+    echo "Usage: $0 <qfile> <why>"
+    exit 1
+fi
+
+qfile="$1"
+why="$2"
+
+# Load environment variables from .env file
+set -o allexport
+source .env
+set +o allexport
+
+# Run the Go binary with only the first two arguments
+./fax_notify "$qfile" "$why"
