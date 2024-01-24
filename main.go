@@ -166,7 +166,7 @@ func main() {
 	flag.Parse()
 
 	taskQueue := make(chan Task)
-	go processTasks(taskQueue)
+	//go processTasks(taskQueue)
 
 	if lokiURL != "" {
 		lokiClient = NewLokiClient(lokiURL, lokiUser, lokiPass)
@@ -276,7 +276,7 @@ func processFile(filePath string, spoolerDir string, queueTask chan Task) {
 		entry, err := parseLogLine(line, spoolerDir, queueTask)
 		if err != nil {
 			log.Errorf("ERROR: %s", err)
-			break
+			continue
 		}
 
 		log.Printf("%+v\n", entry)
@@ -453,7 +453,7 @@ func parseLogLine(line string, spoolerDir string, taskQueue chan Task) (XFRecord
 				log.Errorf("Failed to send fax: %s", err)
 				return entry, err
 			}
-			taskQueue <- Task{spoolDir: spoolerDir, filename: entry.Filename}
+			//taskQueue <- Task{spoolDir: spoolerDir, filename: entry.Filename}
 		}
 		break
 	case "SEND":
@@ -584,14 +584,14 @@ func sendFax(entry XFRecord, spoolDir string) error {
 		return fmt.Errorf("sendfax command failed: %w", err)
 	}
 
-	/*// Delete the fax file after sending
+	// Delete the fax file after sending
 	err = os.Remove(fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
 	if err != nil {
 		log.Errorf("Failed to delete fax file: %s", err)
 		return err
 	}
 
-	log.Info("Fax file deleted successfully")*/
+	log.Info("Fax file deleted successfully")
 
 	// todo convert file deletion to a cronjob
 
