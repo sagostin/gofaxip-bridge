@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# DynamicConfigOutgoing script
+
+# Arguments
+modem_name=$1  # Modem name, for logging
+fax_owner=$2   # Fax owner's name
+destination_number=$3  # Destination phone number
+
+# Default gateway
+default_gateway="telcobridges1,telcobridges2"
+
+# Call Python script to find the gateway
+gateway_name=$(python3 /opt/gofaxip-process/uid2gateway.py $destination_number)
+
+# If no gateway found, use default
+if [[ -z $gateway_name ]]; then
+    gateway_name=$default_gateway
+fi
+
+#
+echo "LocalIdentifier: $fax_owner"
+# Output the caller ID
+echo "FAXNumber: $fax_owner"
+# Output the gateway name for use
+echo "Gateway: $gateway_name"
