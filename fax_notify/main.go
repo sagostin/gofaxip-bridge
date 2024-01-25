@@ -13,14 +13,9 @@ import (
 
 func main() {
 	// Load environment variables from .env file
-	err := godotenv.Load()
+	err := godotenv.Load(".env", "/root/gofaxip-bridge/fax_notify/.env")
 	if err != nil {
 		fmt.Println("Error loading .env file")
-	}
-
-	if len(os.Args) < 3 {
-		fmt.Println("Usage: notify <qfile> <why>")
-		os.Exit(1)
 	}
 
 	qfile := os.Args[1]
