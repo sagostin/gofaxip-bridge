@@ -16,7 +16,6 @@ func main() {
 	err := godotenv.Load()
 	if err != nil {
 		fmt.Println("Error loading .env file")
-		os.Exit(1)
 	}
 
 	if len(os.Args) < 3 {
