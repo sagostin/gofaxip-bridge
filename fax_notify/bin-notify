@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# blank notify just to trigger the log
+# to be placed in /var/spool/hylafax/bin/notify

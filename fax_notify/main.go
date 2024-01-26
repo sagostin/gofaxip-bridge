@@ -1,45 +1,144 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/joho/godotenv"
 	log "github.com/sirupsen/logrus"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
+	"os/exec"
+	"regexp"
+	"strings"
+	"time"
 )
+
+const timeLayout = "2006-01-02 15:04:05"
+const lastRunFile = "last_run.txt"
+const interval = 2 * time.Minute
+const firstRun = 10 * time.Minute
 
 func main() {
 	// Load environment variables from .env file
-	err := godotenv.Load(".env", "/root/gofaxip-bridge/fax_notify/.env")
+	err := godotenv.Load()
 	if err != nil {
-		fmt.Println("Error loading .env file")
+		log.Fatal(err)
 	}
 
-	qfile := os.Args[1]
-	why := os.Args[2]
+	log.Info("Starting fax_notify")
+	for {
+		// Get the last run time from file
+		sinceTime := getLastRunTime()
 
-	filePath := os.Getenv("BASE_HYLAFAX_PATH") + qfile
+		// Run the journalctl command and parse the output
+		log.Info("Running journalctl")
+		output := runJournalctl(sinceTime)
+		parseOutput(output)
 
-	// Read the contents of the qfile
-	qfileContents, err := readQfile(filePath)
+		// Update the last run time to the current time
+		updateLastRunTime()
+
+		// Wait for 2 minutes before the next run
+		time.Sleep(interval)
+	}
+}
+
+// getLastRunTime retrieves the last run time from a file.
+func getLastRunTime() time.Time {
+	content, err := ioutil.ReadFile(lastRunFile)
 	if err != nil {
-		fmt.Println("Error reading qfile:", err)
-		os.Exit(1)
+		// If there's an error (e.g., file doesn't exist), default to 2 minutes ago
+		return time.Now().Add(-firstRun)
 	}
 
-	qfileContents.Why = why
-
-	// Send a webhook request
-	err = sendWebhook(qfileContents)
+	lastRunStr := string(content)
+	lastRunTime, err := time.Parse(timeLayout, lastRunStr)
 	if err != nil {
-		fmt.Println("Error sending webhook:", err)
-		os.Exit(1)
+		return time.Now().Add(-firstRun)
+	}
+	return lastRunTime
+}
+
+// updateLastRunTime writes the current time as the last run time to a file.
+func updateLastRunTime() {
+	currentTime := time.Now().Format(timeLayout)
+	err := ioutil.WriteFile(lastRunFile, []byte(currentTime), 0644)
+	if err != nil {
+		fmt.Println("Error updating last run time:", err)
+	}
+}
+
+// runJournalctl executes the journalctl command and returns the output.
+func runJournalctl(sinceTime time.Time) string {
+	cmd := exec.Command("journalctl", "--no-pager", "-u", "faxq", "--since", sinceTime.Format(timeLayout))
+	output, err := cmd.Output()
+	if err != nil {
+		fmt.Println("Error running journalctl:", err)
+		return ""
+	}
+	return string(output)
+}
+
+// parseOutput processes the output to find specific lines and extract data.
+func parseOutput(output string) {
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, "NOTIFY: bin/notify") {
+			qfile, why := extractInfo(line)
+
+			log.Info("qfile: " + qfile + " why: " + why)
+
+			if why == "rejected" ||
+				why == "removed" ||
+				why == "killed" {
+			} else {
+				continue
+			}
+
+			//qfile = strings.Replace(qfile, "\"", "", -1)
+			//why = strings.Replace(why, "\"", "", -1)
+
+			filePath := os.Getenv("BASE_HYLAFAX_PATH") + qfile
+
+			log.Info("filePath: " + filePath)
+
+			// Read the contents of the qfile
+			qfileContents, err := readQfile(filePath)
+			if err != nil {
+				log.Errorf("Error reading qfile:", err)
+			}
+
+			qfileContents.Why = why
+
+			// Send a webhook request
+			err = sendWebhook(qfileContents)
+			if err != nil {
+				log.Error("Error sending webhook:", err)
+			}
+
+			log.Info("Webhook sent successfully")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		log.Error("Error scanning output:", err)
+	}
+}
+
+// extractInfo extracts and prints the required information from the log line.
+func extractInfo(line string) (string, string) {
+	re := regexp.MustCompile(`NOTIFY: bin\/notify "([^"]*)" "([^"]*)"`)
+	matches := re.FindStringSubmatch(line)
+	if len(matches) >= 2 {
+		//fmt.Printf("First Option: %s, Second Option: %s\n", matches[0], matches[1])
+		return matches[1], matches[2]
 	}
 
-	fmt.Println("Webhook sent successfully!")
+	return "", ""
 }
 
 type QFileData struct {
@@ -50,6 +149,7 @@ type QFileData struct {
 	Pages      int    `json:"total_pages"`
 	TotalDials int    `json:"total_dials"`
 	TotalTries int    `json:"total_tries"`
+	JobID      int    `json:"job_id"`
 	Status     string `json:"status"`
 	Why        string `json:"why"`
 }
@@ -75,6 +175,10 @@ func readQfile(filename string) (QFileData, error) {
 	if err != nil {
 		return data, err
 	}
+	jobID, err := qfile.GetInt("jobid") // total dial attempts
+	if err != nil {
+		return data, err
+	}
 
 	data = QFileData{
 		SrcNum:     qfile.GetString("owner"),
@@ -85,6 +189,7 @@ func readQfile(filename string) (QFileData, error) {
 		TotalDials: totDials,
 		TotalTries: totTries,
 		Status:     qfile.GetString("status"),
+		JobID:      jobID,
 	}
 
 	return data, nil
