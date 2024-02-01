@@ -144,7 +144,7 @@ type XFRecord struct {
 	Direction XFDirection `json:"direction,omitempty"`
 }
 
-var lokiURL, lokiUser, lokiPass string
+var lokiURL, lokiUser, lokiPass, faxRetryCount string
 
 var processedFilePath string // New flag for log file path
 var fsWatcher *fsnotify.Watcher
@@ -162,6 +162,8 @@ func main() {
 	flag.StringVar(&lokiURL, "lokiURL", "", "URL to Loki's push API")
 	flag.StringVar(&lokiUser, "lokiUser", "", "Username for Loki")
 	flag.StringVar(&lokiPass, "lokiPass", "", "Password for Loki")
+
+	flag.StringVar(&faxRetryCount, "faxRetryCount", "5", "Fax Retry Count")
 
 	flag.Parse()
 
@@ -563,8 +565,8 @@ func sendFax(entry XFRecord, spoolDir string) error {
 		" -o " + entry.Cidnum +
 		" -c \"" + entry.Cidname +
 		"\" -k \"now + 2 days\"" +
-		" -T 10" +
-		" -t 10" +
+		" -T " + faxRetryCount +
+		" -t " + faxRetryCount +
 		//" -I \"10min\"" +
 		" -d " + entry.Destnum +
 		" " + fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
@@ -573,11 +575,12 @@ func sendFax(entry XFRecord, spoolDir string) error {
 		" -o "+entry.Cidnum+
 		" -c \""+entry.Cidname+
 		"\" -k \"now + 2 days\""+
-		" -T 10"+
-		" -t 10"+
+		" -T "+faxRetryCount+
+		" -t "+faxRetryCount+
 		//" -I 10min"+
 		" -d "+entry.Destnum+
 		" "+fmt.Sprintf("%s/%s", spoolDir, entry.Filename))
+
 	_, err := cmd.CombinedOutput()
 	//log.Info(string(output))
 	if err != nil {
