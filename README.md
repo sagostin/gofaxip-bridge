@@ -14,6 +14,7 @@ GoFaxIP-Bridge is a tool designed for interfacing with FreeSWITCH to enable the 
 - FreeSWITCH with fax capabilities
 - HylaFAX installed and configured
 - Access to a SIP trunk or PBX for fax transmission
+- GoFaxIP
 
 ## Installation
 
