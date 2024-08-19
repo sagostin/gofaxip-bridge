@@ -5,22 +5,42 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/joho/godotenv"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/jung-kurt/gofpdf"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/image/tiff"
+	"image/jpeg"
 )
 
 const timeLayout = "2006-01-02 15:04:05"
 const lastRunFile = "last_run.txt"
 const interval = 2 * time.Minute
 const firstRun = 10 * time.Minute
+
+type QFileData struct {
+	SrcNum     string `json:"src_num"`
+	SrcCid     string `json:"src_cid"`
+	DestNum    string `json:"dest_num"`
+	DestCid    string `json:"dest_cid"`
+	Pages      int    `json:"total_pages"`
+	TotalDials int    `json:"total_dials"`
+	TotalTries int    `json:"total_tries"`
+	JobID      int    `json:"job_id"`
+	Status     string `json:"status"`
+	Why        string `json:"why"`
+	TiffPath   string `json:"tiff_path"`
+}
 
 func main() {
 	// Load environment variables from .env file
@@ -47,11 +67,9 @@ func main() {
 	}
 }
 
-// getLastRunTime retrieves the last run time from a file.
 func getLastRunTime() time.Time {
 	content, err := ioutil.ReadFile(lastRunFile)
 	if err != nil {
-		// If there's an error (e.g., file doesn't exist), default to 2 minutes ago
 		return time.Now().Add(-firstRun)
 	}
 
@@ -63,7 +81,6 @@ func getLastRunTime() time.Time {
 	return lastRunTime
 }
 
-// updateLastRunTime writes the current time as the last run time to a file.
 func updateLastRunTime() {
 	currentTime := time.Now().Format(timeLayout)
 	err := ioutil.WriteFile(lastRunFile, []byte(currentTime), 0644)
@@ -72,7 +89,6 @@ func updateLastRunTime() {
 	}
 }
 
-// runJournalctl executes the journalctl command and returns the output.
 func runJournalctl(sinceTime time.Time) string {
 	cmd := exec.Command("journalctl", "--no-pager", "-u", "faxq", "--since", sinceTime.Format(timeLayout))
 	output, err := cmd.Output()
@@ -83,7 +99,6 @@ func runJournalctl(sinceTime time.Time) string {
 	return string(output)
 }
 
-// parseOutput processes the output to find specific lines and extract data.
 func parseOutput(output string) {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
@@ -93,35 +108,28 @@ func parseOutput(output string) {
 
 			log.Info("qfile: " + qfile + " why: " + why)
 
-			if why == "rejected" ||
-				why == "removed" ||
-				why == "killed" {
-			} else {
-				continue
-			}
-
-			//qfile = strings.Replace(qfile, "\"", "", -1)
-			//why = strings.Replace(why, "\"", "", -1)
+			//if why == "rejected" || why == "removed" || why == "killed" {
+			// skip checking, and handle checking on n8n, for testing purposes.
 
 			filePath := os.Getenv("BASE_HYLAFAX_PATH") + qfile
 
 			log.Info("filePath: " + filePath)
 
-			// Read the contents of the qfile
 			qfileContents, err := readQfile(filePath)
 			if err != nil {
 				log.Errorf("Error reading qfile:", err)
+				continue
 			}
 
 			qfileContents.Why = why
 
-			// Send a webhook request
 			err = sendWebhook(qfileContents)
 			if err != nil {
 				log.Error("Error sending webhook:", err)
+			} else {
+				log.Info("Webhook sent successfully")
 			}
-
-			log.Info("Webhook sent successfully")
+			//}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -129,56 +137,27 @@ func parseOutput(output string) {
 	}
 }
 
-// extractInfo extracts and prints the required information from the log line.
 func extractInfo(line string) (string, string) {
-	re := regexp.MustCompile(`NOTIFY: bin\/notify "([^"]*)" "([^"]*)"`)
+	re := regexp.MustCompile(`NOTIFY: bin/notify "([^"]*)" "([^"]*)"`)
 	matches := re.FindStringSubmatch(line)
-	if len(matches) >= 2 {
-		//fmt.Printf("First Option: %s, Second Option: %s\n", matches[0], matches[1])
+	if len(matches) >= 3 {
 		return matches[1], matches[2]
 	}
-
 	return "", ""
-}
-
-type QFileData struct {
-	SrcNum     string `json:"src_num"`
-	SrcCid     string `json:"src_cid"`
-	DestNum    string `json:"dest_num"`
-	DestCid    string `json:"dest_cid"`
-	Pages      int    `json:"total_pages"`
-	TotalDials int    `json:"total_dials"`
-	TotalTries int    `json:"total_tries"`
-	JobID      int    `json:"job_id"`
-	Status     string `json:"status"`
-	Why        string `json:"why"`
 }
 
 func readQfile(filename string) (QFileData, error) {
 	var data QFileData
 
-	// Read the qfile contents
 	qfile, err := OpenQfile(filename)
 	if err != nil {
 		return data, err
 	}
 
-	totPages, err := qfile.GetInt("totpages") // total pages
-	if err != nil {
-		return data, err
-	}
-	totTries, err := qfile.GetInt("tottries") // total tries
-	if err != nil {
-		return data, err
-	}
-	totDials, err := qfile.GetInt("totdials") // total dial attempts
-	if err != nil {
-		return data, err
-	}
-	jobID, err := qfile.GetInt("jobid") // total dial attempts
-	if err != nil {
-		return data, err
-	}
+	totPages, _ := qfile.GetInt("totpages")
+	totTries, _ := qfile.GetInt("tottries")
+	totDials, _ := qfile.GetInt("totdials")
+	jobID, _ := qfile.GetInt("jobid")
 
 	data = QFileData{
 		SrcNum:     qfile.GetString("owner"),
@@ -190,126 +169,134 @@ func readQfile(filename string) (QFileData, error) {
 		TotalTries: totTries,
 		Status:     qfile.GetString("status"),
 		JobID:      jobID,
+		TiffPath:   extractTiffPath(qfile),
 	}
 
 	return data, nil
+}
 
-	/*
-		tts:1706119431
-		killtime:1706289964
-		retrytime:0
-		state:3
-		npages:0
-		totpages:1
-		nskip:0
-		skippages:0
-		ncover:0
-		coverpages:0
-		ntries:0
-		ndials:0
-		totdials:8
-		maxdials:50
-		tottries:0
-		maxtries:50
-		pagewidth:215
-		resolution:98
-		pagelength:279
-		priority:127
-		schedpri:119
-		minbr:0
-		desiredbr:13
-		desiredst:0
-		desiredec:2
-		desireddf:3
-		desiredtl:0
-		useccover:1
-		usexvres:0
-		external:12505652556
-		number:12505652556
-		mailaddr:root@faxrelay.topsoffice.ca
-		sender:root
-		jobid:1177
-		jobtag:
-		pagehandling:e0P
-		modem:any
-		faxnumber:
-		tsi:2507632912
-		receiver:
-		company:
-		location:
-		voice:
-		fromcompany:
-		fromlocation:
-		fromvoice:
-		regarding:
-		comments:
-		cover:
-		client:localhost
-		owner:2507632912
-		groupid:1177
-		signalrate:14400
-		dataformat:
-		jobtype:facsimile
-		tagline:
-		subaddr:
-		passwd:
-		doneop:default
-		commid:00003431
-		csi:
-		nsf:
-		pagerange:
-		status:The call dropped prematurely
-		statuscode:0
-		returned:0
-		notify:none
-		pagechop:default
-		chopthreshold:3
-		!tiff:0::docq/doc111.tif.1177
-		fax:0::docq/doc111.tif;f0
-	*/
+func extractTiffPath(qfile *Qfile) string {
+	tiffLine := qfile.GetString("!tiff:0")
+	parts := strings.Split(tiffLine, "::")
+	if len(parts) > 1 {
+		return filepath.Join(os.Getenv("BASE_HYLAFAX_PATH"), parts[1])
+	}
+	return ""
+}
 
+func convertTiffToPdf(inputPath string) (string, error) {
+	// Open the TIFF file
+	tiffFile, err := os.Open(inputPath)
+	if err != nil {
+		return "", err
+	}
+	defer tiffFile.Close()
+
+	// Decode the TIFF image (only the first page)
+	tiffImage, err := tiff.Decode(tiffFile)
+	if err != nil {
+		return "", err
+	}
+
+	// Create a new PDF
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+
+	// Convert TIFF to JPEG (in memory)
+	jpegBuffer := new(bytes.Buffer)
+	err = jpeg.Encode(jpegBuffer, tiffImage, nil)
+	if err != nil {
+		return "", err
+	}
+
+	// Add the JPEG to the PDF
+	imageOptions := gofpdf.ImageOptions{ImageType: "JPEG", ReadDpi: true}
+	pdf.RegisterImageOptionsReader("tiff_image", imageOptions, jpegBuffer)
+	pdf.Image("tiff_image", 10, 10, 190, 0, false, "", 0, "")
+
+	// Save the PDF to a temporary file
+	outputPath := filepath.Join(os.TempDir(), fmt.Sprintf("converted_%d.pdf", time.Now().UnixNano()))
+	err = pdf.OutputFileAndClose(outputPath)
+	if err != nil {
+		return "", err
+	}
+
+	return outputPath, nil
 }
 
 func sendWebhook(data QFileData) error {
-	// Prepare the webhook URL and credentials from environment variables
 	webhookURL := os.Getenv("WEBHOOK_URL")
 	username := os.Getenv("WEBHOOK_USERNAME")
 	password := os.Getenv("WEBHOOK_PASSWORD")
 
-	// Create an HTTP client with basic authentication
 	client := &http.Client{}
 
-	// Convert the data struct to JSON
+	// Convert TIFF to PDF (only first page)
+	pdfPath, err := convertTiffToPdf(data.TiffPath)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(pdfPath)
+
+	// Prepare multipart form data
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Add JSON data
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
+	err = writer.WriteField("json_data", string(jsonData))
+	if err != nil {
+		return err
+	}
 
-	req, err := http.NewRequest("POST", webhookURL, bytes.NewBuffer(jsonData))
+	// Add PDF file
+	file, err := os.Open(pdfPath)
+	if err != nil {
+		return err
+	}
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			log.Error(err)
+		}
+	}(file)
+
+	part, err := writer.CreateFormFile("pdf_file", filepath.Base(pdfPath))
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(part, file)
+	if err != nil {
+		return err
+	}
+
+	err = writer.Close()
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", webhookURL, body)
 	if err != nil {
 		return err
 	}
 	req.SetBasicAuth(username, password)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	// Set JSON data in the request body
-	req.Header.Set("Content-Type", "application/json")
-
-	// Send the request
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			log.Error(err)
-		}
-	}(resp.Body)
+	defer resp.Body.Close()
 
-	// Check the response status
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("webhook request failed with status code: %d", resp.StatusCode)
 	}
 
 	return nil
 }
+
+// OpenQfile and related functions should be implemented here
+// This part is missing from the provided code, so you'll need to add it
