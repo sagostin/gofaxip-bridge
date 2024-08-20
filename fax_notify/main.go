@@ -181,6 +181,10 @@ func extractTiffPath(qfile *Qfile) string {
 
 	if tiffLine == "" {
 		log.Warn("No !tiff:0 tag found in qfile")
+		// Dump all params for debugging
+		for _, param := range qfile.params {
+			log.Info(fmt.Sprintf("Tag: %s, Value: %s", param.Tag, param.Value))
+		}
 		return ""
 	}
 

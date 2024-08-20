@@ -39,8 +39,6 @@ type Qfile struct {
 
 // OpenQfile opens and parses a HylaFAX queue file
 func OpenQfile(filename string) (*Qfile, error) {
-	var err error
-
 	// Open queue file
 	qfh, err := os.OpenFile(filename, os.O_RDWR, 0666)
 	if err != nil {
@@ -60,23 +58,17 @@ func OpenQfile(filename string) (*Qfile, error) {
 	}
 
 	// Read tags
-	line := 1
 	scanner := bufio.NewScanner(qfh)
 	for scanner.Scan() {
 		text := scanner.Text()
-		var parts []string
-		if strings.HasPrefix(text, "!") {
-			parts = []string{text[:strings.Index(text, ":")], text[strings.Index(text, ":")+1:]}
-		} else {
-			parts = strings.SplitN(text, ":", 2)
-		}
+		parts := strings.SplitN(text, ":", 2)
 		if len(parts) != 2 {
 			qfh.Close()
-			return nil, fmt.Errorf("%s: Error parsing line %d", filename, line)
+			return nil, fmt.Errorf("%s: Error parsing line: %s", filename, text)
 		}
 		q.params = append(q.params, param{strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])})
-		line++
 	}
+
 	if err = scanner.Err(); err != nil {
 		qfh.Close()
 		return nil, err
@@ -92,9 +84,7 @@ func (q *Qfile) Close() error {
 
 // Write re-writes an opened queue file
 func (q *Qfile) Write() error {
-	var err error
-
-	if _, err = q.qfh.Seek(0, 0); err != nil {
+	if _, err := q.qfh.Seek(0, 0); err != nil {
 		return err
 	}
 
@@ -107,11 +97,11 @@ func (q *Qfile) Write() error {
 		bytes += int64(n)
 	}
 
-	if err = q.qfh.Truncate(bytes); err != nil {
+	if err := q.qfh.Truncate(bytes); err != nil {
 		return err
 	}
 
-	if err = q.qfh.Sync(); err != nil {
+	if err := q.qfh.Sync(); err != nil {
 		return err
 	}
 
