@@ -177,34 +177,45 @@ func readQfile(filename string) (QFileData, error) {
 
 func extractTiffPath(qfile *Qfile) string {
 	tiffLine := qfile.GetString("!tiff:0")
+	log.Info("Raw tiff line: " + tiffLine)
+
+	if tiffLine == "" {
+		log.Warn("No !tiff:0 tag found in qfile")
+		return ""
+	}
+
 	parts := strings.Split(tiffLine, "::")
-	log.Info(tiffLine)
-	log.Warn(os.Getenv("BASE_HYLAFAX_PATH"))
+	log.Info("Tiff parts: ", parts)
 
 	if len(parts) > 1 {
-		return filepath.Join(os.Getenv("BASE_HYLAFAX_PATH"), parts[1])
+		tiffPath := filepath.Join(os.Getenv("BASE_HYLAFAX_PATH"), strings.TrimSpace(parts[1]))
+		log.Info("Constructed tiff path: " + tiffPath)
+		return tiffPath
 	}
+
+	log.Warn("Could not extract tiff path from !tiff:0 tag")
 	return ""
 }
 
 func convertTiffToPdf(inputPath string) (string, error) {
+	log.Info("Converting TIFF to PDF, input path: " + inputPath)
+
+	// Check if the file exists
+	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("TIFF file does not exist: %s", inputPath)
+	}
+
 	// Open the TIFF file
-	log.Warn("tiff file path: " + inputPath)
 	tiffFile, err := os.Open(inputPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to open TIFF file: %v", err)
 	}
-	defer func(tiffFile *os.File) {
-		err := tiffFile.Close()
-		if err != nil {
-			log.Error(err)
-		}
-	}(tiffFile)
+	defer tiffFile.Close()
 
 	// Decode the TIFF image (only the first page)
 	tiffImage, err := tiff.Decode(tiffFile)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to decode TIFF file: %v", err)
 	}
 
 	// Create a new PDF
@@ -215,7 +226,7 @@ func convertTiffToPdf(inputPath string) (string, error) {
 	jpegBuffer := new(bytes.Buffer)
 	err = jpeg.Encode(jpegBuffer, tiffImage, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to encode TIFF to JPEG: %v", err)
 	}
 
 	// Add the JPEG to the PDF
@@ -227,9 +238,10 @@ func convertTiffToPdf(inputPath string) (string, error) {
 	outputPath := filepath.Join(os.TempDir(), fmt.Sprintf("converted_%d.pdf", time.Now().UnixNano()))
 	err = pdf.OutputFileAndClose(outputPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to save PDF: %v", err)
 	}
 
+	log.Info("Successfully converted TIFF to PDF, output path: " + outputPath)
 	return outputPath, nil
 }
 

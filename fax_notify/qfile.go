@@ -1,20 +1,3 @@
-// This file is part of the GOfax.IP project - https://github.com/gonicus/gofaxip
-// Copyright (C) 2014 GONICUS GmbH, Germany - http://www.gonicus.de
-//
-// This program is free software; you can redistribute it and/or
-// modify it under the terms of the GNU General Public License
-// as published by the Free Software Foundation; version 2
-// of the License.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program; if not, write to the Free Software
-// Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
-
 package main
 
 import (
@@ -80,7 +63,13 @@ func OpenQfile(filename string) (*Qfile, error) {
 	line := 1
 	scanner := bufio.NewScanner(qfh)
 	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), ":", 2)
+		text := scanner.Text()
+		var parts []string
+		if strings.HasPrefix(text, "!") {
+			parts = []string{text[:strings.Index(text, ":")], text[strings.Index(text, ":")+1:]}
+		} else {
+			parts = strings.SplitN(text, ":", 2)
+		}
 		if len(parts) != 2 {
 			qfh.Close()
 			return nil, fmt.Errorf("%s: Error parsing line %d", filename, line)
@@ -129,7 +118,7 @@ func (q *Qfile) Write() error {
 	return nil
 }
 
-// GetAll returns a slice containting all values for
+// GetAll returns a slice containing all values for
 // given tag.
 func (q *Qfile) GetAll(tag string) []string {
 	var result []string
