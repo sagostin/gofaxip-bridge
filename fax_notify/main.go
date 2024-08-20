@@ -178,8 +178,10 @@ func readQfile(filename string) (QFileData, error) {
 func extractTiffPath(qfile *Qfile) string {
 	tiffLine := qfile.GetString("!tiff:0")
 	parts := strings.Split(tiffLine, "::")
+	log.Info(tiffLine)
+	log.Warn(os.Getenv("BASE_HYLAFAX_PATH"))
+
 	if len(parts) > 1 {
-		log.Info(tiffLine)
 		return filepath.Join(os.Getenv("BASE_HYLAFAX_PATH"), parts[1])
 	}
 	return ""
@@ -282,11 +284,11 @@ func sendWebhook(data QFileData) error {
 		if err != nil {
 			return err
 		}
+	}
 
-		err = writer.Close()
-		if err != nil {
-			return err
-		}
+	err = writer.Close()
+	if err != nil {
+		return err
 	}
 
 	req, err := http.NewRequest("POST", webhookURL, body)
