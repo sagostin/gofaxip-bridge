@@ -176,11 +176,11 @@ func readQfile(filename string) (QFileData, error) {
 }
 
 func extractTiffPath(qfile *Qfile) string {
-	tiffLine := qfile.GetString("!tiff:0")
+	tiffLine := qfile.GetString("!tiff")
 	log.Info("Raw tiff line: " + tiffLine)
 
 	if tiffLine == "" {
-		log.Warn("No !tiff:0 tag found in qfile")
+		log.Warn("No !tiff tag found in qfile")
 		// Dump all params for debugging
 		for _, param := range qfile.params {
 			log.Info(fmt.Sprintf("Tag: %s, Value: %s", param.Tag, param.Value))
@@ -188,17 +188,16 @@ func extractTiffPath(qfile *Qfile) string {
 		return ""
 	}
 
-	parts := strings.Split(tiffLine, "::")
-	log.Info("Tiff parts: ", parts)
+	// Remove the leading "0::" and any trailing quote
+	tiffPath := strings.TrimPrefix(tiffLine, "0::")
+	tiffPath = strings.TrimSuffix(tiffPath, "\"")
 
-	if len(parts) > 1 {
-		tiffPath := filepath.Join(os.Getenv("BASE_HYLAFAX_PATH"), strings.TrimSpace(parts[1]))
-		log.Info("Constructed tiff path: " + tiffPath)
-		return tiffPath
-	}
+	log.Info("Extracted tiff path: " + tiffPath)
 
-	log.Warn("Could not extract tiff path from !tiff:0 tag")
-	return ""
+	fullPath := filepath.Join(os.Getenv("BASE_HYLAFAX_PATH"), strings.TrimSpace(tiffPath))
+	log.Info("Constructed full tiff path: " + fullPath)
+
+	return fullPath
 }
 
 func convertTiffToPdf(inputPath string) (string, error) {
