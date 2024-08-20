@@ -299,6 +299,8 @@ func sendWebhook(data QFileData) error {
 		if err != nil {
 			return err
 		}
+	} else {
+		log.Error(err)
 	}
 
 	err = writer.Close()
