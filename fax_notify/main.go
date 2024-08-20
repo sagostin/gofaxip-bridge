@@ -117,7 +117,7 @@ func parseOutput(output string) {
 
 			qfileContents, err := readQfile(filePath)
 			if err != nil {
-				log.Errorf("Error reading qfile:", err)
+				log.Errorf("Error reading qfile: %s", err)
 				continue
 			}
 
@@ -179,6 +179,7 @@ func extractTiffPath(qfile *Qfile) string {
 	tiffLine := qfile.GetString("!tiff:0")
 	parts := strings.Split(tiffLine, "::")
 	if len(parts) > 1 {
+		log.Info(tiffLine)
 		return filepath.Join(os.Getenv("BASE_HYLAFAX_PATH"), parts[1])
 	}
 	return ""
@@ -186,11 +187,17 @@ func extractTiffPath(qfile *Qfile) string {
 
 func convertTiffToPdf(inputPath string) (string, error) {
 	// Open the TIFF file
+	log.Warn("tiff file path: " + inputPath)
 	tiffFile, err := os.Open(inputPath)
 	if err != nil {
 		return "", err
 	}
-	defer tiffFile.Close()
+	defer func(tiffFile *os.File) {
+		err := tiffFile.Close()
+		if err != nil {
+			log.Error(err)
+		}
+	}(tiffFile)
 
 	// Decode the TIFF image (only the first page)
 	tiffImage, err := tiff.Decode(tiffFile)
@@ -231,13 +238,6 @@ func sendWebhook(data QFileData) error {
 
 	client := &http.Client{}
 
-	// Convert TIFF to PDF (only first page)
-	pdfPath, err := convertTiffToPdf(data.TiffPath)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(pdfPath)
-
 	// Prepare multipart form data
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -252,30 +252,41 @@ func sendWebhook(data QFileData) error {
 		return err
 	}
 
-	// Add PDF file
-	file, err := os.Open(pdfPath)
-	if err != nil {
-		return err
-	}
-	defer func(file *os.File) {
-		err := file.Close()
+	// Convert TIFF to PDF (only first page)
+	pdfPath, err := convertTiffToPdf(data.TiffPath)
+	if err == nil {
+		defer func(name string) {
+			err := os.Remove(name)
+			if err != nil {
+				log.Error(err)
+			}
+		}(pdfPath)
+
+		// Add PDF file
+		file, err := os.Open(pdfPath)
 		if err != nil {
-			log.Error(err)
+			return err
 		}
-	}(file)
+		defer func(file *os.File) {
+			err := file.Close()
+			if err != nil {
+				log.Error(err)
+			}
+		}(file)
 
-	part, err := writer.CreateFormFile("pdf_file", filepath.Base(pdfPath))
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(part, file)
-	if err != nil {
-		return err
-	}
+		part, err := writer.CreateFormFile("pdf_file", filepath.Base(pdfPath))
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(part, file)
+		if err != nil {
+			return err
+		}
 
-	err = writer.Close()
-	if err != nil {
-		return err
+		err = writer.Close()
+		if err != nil {
+			return err
+		}
 	}
 
 	req, err := http.NewRequest("POST", webhookURL, body)
@@ -289,7 +300,12 @@ func sendWebhook(data QFileData) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			log.Error(err)
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("webhook request failed with status code: %d", resp.StatusCode)
