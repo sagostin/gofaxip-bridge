@@ -207,26 +207,24 @@ func convertTiffToPdf(inputPath string) (string, error) {
 
 	// Create temporary paths for intermediate and final PDFs
 	tempDir := os.TempDir()
-	fullPdfPath := filepath.Join(tempDir, fmt.Sprintf("full_%d.pdf", time.Now().UnixNano()))
+	//fullPdfPath := filepath.Join(tempDir, fmt.Sprintf("full_%d.pdf", time.Now().UnixNano()))
 	finalPdfPath := filepath.Join(tempDir, fmt.Sprintf("first_page_%d.pdf", time.Now().UnixNano()))
 
 	// Step 1: Convert entire TIFF to PDF
-	cmd := exec.Command("convert", inputPath, fullPdfPath)
+	cmd := exec.Command("convert",
+		"-density", "300",
+		"-compress", "lzw",
+		"-quality", "100",
+		"-background", "white",
+		"-alpha", "remove",
+		inputPath+"[0]",
+		"-resize", "2550x3300>",
+		finalPdfPath)
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to convert TIFF to PDF: %v, output: %s", err, string(output))
 	}
-
-	// Step 2: Extract first page from the full PDF
-	cmd = exec.Command("convert", fullPdfPath+"[0]", finalPdfPath)
-	output, err = cmd.CombinedOutput()
-	if err != nil {
-		os.Remove(fullPdfPath) // Clean up the full PDF
-		return "", fmt.Errorf("failed to extract first page: %v, output: %s", err, string(output))
-	}
-
-	// Clean up the full PDF
-	os.Remove(fullPdfPath)
 
 	log.Info("Successfully converted TIFF to PDF and extracted first page, output path: " + finalPdfPath)
 	return finalPdfPath, nil
