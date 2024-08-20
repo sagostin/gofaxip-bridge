@@ -17,10 +17,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/jung-kurt/gofpdf"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/image/tiff"
-	"image/jpeg"
 )
 
 const timeLayout = "2006-01-02 15:04:05"
@@ -201,51 +198,38 @@ func extractTiffPath(qfile *Qfile) string {
 }
 
 func convertTiffToPdf(inputPath string) (string, error) {
-	log.Info("Converting TIFF to PDF, input path: " + inputPath)
+	log.Info("Converting TIFF to PDF and extracting first page, input path: " + inputPath)
 
 	// Check if the file exists
 	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
 		return "", fmt.Errorf("TIFF file does not exist: %s", inputPath)
 	}
 
-	// Open the TIFF file
-	tiffFile, err := os.Open(inputPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to open TIFF file: %v", err)
-	}
-	defer tiffFile.Close()
+	// Create temporary paths for intermediate and final PDFs
+	tempDir := os.TempDir()
+	fullPdfPath := filepath.Join(tempDir, fmt.Sprintf("full_%d.pdf", time.Now().UnixNano()))
+	finalPdfPath := filepath.Join(tempDir, fmt.Sprintf("first_page_%d.pdf", time.Now().UnixNano()))
 
-	// Decode the TIFF image (only the first page)
-	tiffImage, err := tiff.Decode(tiffFile)
+	// Step 1: Convert entire TIFF to PDF
+	cmd := exec.Command("convert", inputPath, fullPdfPath)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to decode TIFF file: %v", err)
-	}
-
-	// Create a new PDF
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.AddPage()
-
-	// Convert TIFF to JPEG (in memory)
-	jpegBuffer := new(bytes.Buffer)
-	err = jpeg.Encode(jpegBuffer, tiffImage, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to encode TIFF to JPEG: %v", err)
+		return "", fmt.Errorf("failed to convert TIFF to PDF: %v, output: %s", err, string(output))
 	}
 
-	// Add the JPEG to the PDF
-	imageOptions := gofpdf.ImageOptions{ImageType: "JPEG", ReadDpi: true}
-	pdf.RegisterImageOptionsReader("tiff_image", imageOptions, jpegBuffer)
-	pdf.Image("tiff_image", 10, 10, 190, 0, false, "", 0, "")
-
-	// Save the PDF to a temporary file
-	outputPath := filepath.Join(os.TempDir(), fmt.Sprintf("converted_%d.pdf", time.Now().UnixNano()))
-	err = pdf.OutputFileAndClose(outputPath)
+	// Step 2: Extract first page from the full PDF
+	cmd = exec.Command("convert", fullPdfPath+"[0]", finalPdfPath)
+	output, err = cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to save PDF: %v", err)
+		os.Remove(fullPdfPath) // Clean up the full PDF
+		return "", fmt.Errorf("failed to extract first page: %v, output: %s", err, string(output))
 	}
 
-	log.Info("Successfully converted TIFF to PDF, output path: " + outputPath)
-	return outputPath, nil
+	// Clean up the full PDF
+	os.Remove(fullPdfPath)
+
+	log.Info("Successfully converted TIFF to PDF and extracted first page, output path: " + finalPdfPath)
+	return finalPdfPath, nil
 }
 
 func sendWebhook(data QFileData) error {
