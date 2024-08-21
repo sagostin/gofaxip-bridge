@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -13,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -230,6 +230,34 @@ func convertTiffToPdf(inputPath string) (string, error) {
 	return finalPdfPath, nil
 }
 
+func WriteQFileDataFields(writer *multipart.Writer, data QFileData) error {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"src_num", data.SrcNum},
+		{"src_cid", data.SrcCid},
+		{"dest_num", data.DestNum},
+		{"dest_cid", data.DestCid},
+		{"total_pages", strconv.Itoa(data.Pages)},
+		{"total_dials", strconv.Itoa(data.TotalDials)},
+		{"total_tries", strconv.Itoa(data.TotalTries)},
+		{"job_id", strconv.Itoa(data.JobID)},
+		{"status", data.Status},
+		{"why", data.Why},
+		{"tiff_path", data.TiffPath},
+	}
+
+	for _, field := range fields {
+		err := writer.WriteField(field.name, field.value)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func sendWebhook(data QFileData) error {
 	webhookURL := os.Getenv("WEBHOOK_URL")
 	username := os.Getenv("WEBHOOK_USERNAME")
@@ -242,11 +270,7 @@ func sendWebhook(data QFileData) error {
 	writer := multipart.NewWriter(body)
 
 	// Add JSON data
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	err = writer.WriteField("json_data", string(jsonData))
+	err := WriteQFileDataFields(writer, data)
 	if err != nil {
 		return err
 	}
