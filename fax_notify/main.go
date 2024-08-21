@@ -105,9 +105,9 @@ func parseOutput(output string) {
 
 			log.Info("qfile: " + qfile + " why: " + why)
 
-			//if why == "rejected" || why == "removed" || why == "killed" {
-			// skip checking, and handle checking on n8n, for testing purposes.
-
+			if !(why == "rejected" || why == "removed" || why == "killed" || why == "requeued") {
+				continue
+			}
 			filePath := os.Getenv("BASE_HYLAFAX_PATH") + qfile
 
 			log.Info("filePath: " + filePath)
