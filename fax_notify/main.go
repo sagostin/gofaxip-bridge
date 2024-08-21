@@ -197,7 +197,7 @@ func extractTiffPath(qfile *Qfile) string {
 	return fullPath
 }
 
-func convertTiffToPdf(inputPath string) (string, error) {
+func convertTiffToPdf(qfile QFileData, inputPath string) (string, error) {
 	log.Info("Converting TIFF to PDF and extracting first page, input path: " + inputPath)
 
 	// Check if the file exists
@@ -208,7 +208,7 @@ func convertTiffToPdf(inputPath string) (string, error) {
 	// Create temporary paths for intermediate and final PDFs
 	tempDir := os.TempDir()
 	//fullPdfPath := filepath.Join(tempDir, fmt.Sprintf("full_%d.pdf", time.Now().UnixNano()))
-	finalPdfPath := filepath.Join(tempDir, fmt.Sprintf("first_page_%d.pdf", time.Now().UnixNano()))
+	finalPdfPath := filepath.Join(tempDir, fmt.Sprintf("first_page__%d_%s_%s.pdf", time.Now().UnixNano(), qfile.SrcNum, qfile.DestNum))
 
 	// Step 1: Convert entire TIFF to PDF
 	cmd := exec.Command("convert",
@@ -276,7 +276,7 @@ func sendWebhook(data QFileData) error {
 	}
 
 	// Convert TIFF to PDF (only first page)
-	pdfPath, err := convertTiffToPdf(data.TiffPath)
+	pdfPath, err := convertTiffToPdf(data, data.TiffPath)
 	if err == nil {
 		defer func(name string) {
 			err := os.Remove(name)
