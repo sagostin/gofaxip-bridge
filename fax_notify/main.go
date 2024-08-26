@@ -24,6 +24,7 @@ const timeLayout = "2006-01-02 15:04:05"
 const lastRunFile = "last_run.txt"
 const interval = 2 * time.Minute
 const firstRun = 10 * time.Minute
+const retryCount = 3
 
 type QFileData struct {
 	SrcNum     string `json:"src_num"`
@@ -108,6 +109,7 @@ func parseOutput(output string) {
 			if !(why == "rejected" || why == "removed" || why == "killed" || why == "requeued") {
 				continue
 			}
+
 			filePath := os.Getenv("BASE_HYLAFAX_PATH") + qfile
 
 			log.Info("filePath: " + filePath)
@@ -115,6 +117,10 @@ func parseOutput(output string) {
 			qfileContents, err := readQfile(filePath)
 			if err != nil {
 				log.Errorf("Error reading qfile: %s", err)
+				continue
+			}
+
+			if !(qfileContents.TotalDials >= retryCount) {
 				continue
 			}
 
