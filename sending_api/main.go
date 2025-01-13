@@ -75,18 +75,18 @@ func main() {
 			})
 		}
 
-		// Retrieve the file from the request
-		fileHeader, err := c.FormFile("file")
-		if err != nil {
+		// Retrieve the file content from the request body
+		fileContent := c.Body()
+		if len(fileContent) == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "failed to retrieve file from request",
+				"error": "empty file content",
 			})
 		}
 
 		// Save the file to the spool directory
 		filename := c.Query("filename", fmt.Sprintf("fax_%d.pdf", time.Now().Unix()))
 		filePath := filepath.Join(spoolDir, filename)
-		err = c.SaveFile(fileHeader, filePath)
+		err := os.WriteFile(filePath, fileContent, 0644)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "failed to save the uploaded file",
