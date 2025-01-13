@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/joho/godotenv"
 	"log"
 	"os"
 	"os/exec"
@@ -21,6 +22,11 @@ type XFRecord struct {
 }
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		return
+	}
+
 	// Load environment variables
 	spoolDir := os.Getenv("SPOOL_DIR")
 	if spoolDir == "" {
