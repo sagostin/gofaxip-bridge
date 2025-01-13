@@ -1,0 +1,12 @@
+[Unit]
+Description=Fax Relay Sending API
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/faxserver
+Restart=always
+WorkingDirectory=/var/faxserver
+
+[Install]
+WantedBy=multi-user.target
